@@ -1,0 +1,3 @@
+*.py[cod]
+cert/cert.crt
+cert/key.key
