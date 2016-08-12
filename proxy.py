@@ -5,6 +5,7 @@ import urlparse
 import socket
 import select
 import ssl
+import threading
 import downgrade
 import BaseHTTPServer
 
@@ -281,25 +282,32 @@ class ThreadingTCPServer(ThreadingMixIn, TCPServer):
 
 ThreadingTCPServer.allow_reuse_address = 1
 
-def proxy_thread(ip, port):
-	HTTP_Proxy.server_version = 'Apache'
-	HTTP_Proxy.sys_version = ''
+class ProxyThread(threading.Thread):
+	def __init__(self, ip, port):
+		threading.Thread.__init__(self)
+		self.ip = ip
+		self.port = port
+		self.killed = False
 
-	if config.cfg.args.proxy is not None:
-		HTTP_Proxy.upstream = config.cfg.args.proxy
+	def run(self):
+		HTTP_Proxy.server_version = 'Apache'
+		HTTP_Proxy.sys_version = ''
 
-	server = ThreadingTCPServer((ip, port), HTTP_Proxy)
+		if config.cfg.args.proxy is not None:
+			HTTP_Proxy.upstream = config.cfg.args.proxy
+
+		self.server = ThreadingTCPServer((self.ip, self.port), HTTP_Proxy)
 	
-	if port == 443:
-		from ssl import wrap_socket
+		if self.port == 443:
+			from ssl import wrap_socket
+			
+			cert = os.path.join(os.path.dirname(__file__), 'cert', 'cert.crt')
+			key =  os.path.join(os.path.dirname(__file__), 'cert', 'key.key')
+			
+			if not os.path.exists(cert) or not os.path.exists(key):
+				print "Error: Certificate not found. Use the 'cert/gen-self-signed-cert.sh' script to use SSL interception."
+				sys.exit()
+			
+			self.server.socket = wrap_socket(self.server.socket, certfile=cert, keyfile=key, server_side=True)
 		
-		cert = os.path.join(os.path.dirname(__file__), 'cert', 'cert.crt')
-		key =  os.path.join(os.path.dirname(__file__), 'cert', 'key.key')
-		
-		if not os.path.exists(cert) or not os.path.exists(key):
-			print "Error: Certificate not found. Use the 'cert/gen-self-signed-cert.sh' script to use SSL interception."
-			sys.exit()
-		
-		server.socket = wrap_socket(server.socket, certfile=cert, keyfile=key, server_side=True)
-	
-	server.serve_forever()
+		self.server.serve_forever()
